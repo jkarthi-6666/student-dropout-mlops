@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 
 dependencies = [
-    "zenml==0.96.2",
+    # zenml[server] pulls in the SQL-store + auth deps (alembic, sqlmodel,
+    # passlib, pyjwt, ...) that the bare zenml package leaves undeclared.
+    "zenml[server]==0.96.2",
     "mlflow==3.14.0",
     "scikit-learn==1.9.0",
     "pandas>=2.2,<3.0",
@@ -17,6 +19,11 @@ dependencies = [
     "ucimlrepo>=0.0.7",
     "pyyaml>=6.0",
     "matplotlib>=3.8",
+    # Floors on SHAP's transitive deps: without these the resolver reaches
+    # back to llvmlite 0.36 / numba pre-0.59, neither of which builds on
+    # Python 3.12. These versions ship prebuilt 3.12 wheels.
+    "llvmlite>=0.43",
+    "numba>=0.60",
 ]
 
 [project.optional-dependencies]
