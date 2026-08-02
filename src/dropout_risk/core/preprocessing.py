@@ -22,14 +22,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from dropout_risk.core.features import ENGINEERED_COLUMNS, add_engineered_features
+from dropout_risk.core.features import ENGINEERED_COLUMNS
 
 # Integer-encoded categoricals (verified in EDA). Not ordinal; must not be scaled.
 CATEGORICAL_COLUMNS = [
-    "Marital status",
+    "Marital Status",
     "Application mode",
     "Application order",
     "Course",
@@ -66,13 +65,15 @@ RAW_NUMERIC_COLUMNS = [
 ] + MACRO_COLUMNS
 
 
-def _engineering_transformer() -> FunctionTransformer:
-    """Stateless transformer that appends the six engineered columns.
+def _engineered_feature_names(transformer, input_features):
+    """Feature names out = all input columns plus the six engineered ones.
 
-    Stateless is correct here: every engineered feature is a row-wise function
-    of that row only, so there is nothing to fit and therefore no leakage risk.
+    Providing this lets the FunctionTransformer preserve names under any global
+    sklearn output config, which is what prevents columns from being silently
+    dropped to a bare ndarray inside a composed Pipeline.
     """
-    return FunctionTransformer(add_engineered_features, validate=False)
+    input_features = list(input_features)
+    return input_features + [c for c in ENGINEERED_COLUMNS if c not in input_features]
 
 
 def numeric_feature_columns(use_engineered: bool) -> list[str]:
@@ -84,13 +85,17 @@ def numeric_feature_columns(use_engineered: bool) -> list[str]:
     return cols
 
 
-def build_gbm_preprocessor(use_engineered: bool = True) -> Pipeline:
+def build_gbm_preprocessor(use_engineered: bool = True) -> ColumnTransformer:
     """Preprocessor for the HistGradientBoosting path.
 
-    Categoricals pass through untouched (the model handles them natively);
-    numerics pass through unscaled (trees are scale-invariant). The only real
-    work is appending engineered features. Returns a Pipeline whose output is a
-    DataFrame-like array plus the categorical mask helper below.
+    Assumes engineered features are ALREADY present on the input frame (added
+    upstream by add_engineered_features). This keeps the sklearn Pipeline free of
+    a FunctionTransformer, which is what makes it robust to MLflow autolog's
+    global sklearn config changes -- there is no stateless wrapper for autolog to
+    corrupt, only a plain column-selecting ColumnTransformer.
+
+    Categoricals pass through untouched (the model splits on them natively);
+    numerics pass through unscaled (trees are scale-invariant).
     """
     numeric_cols = numeric_feature_columns(use_engineered)
 
@@ -103,13 +108,7 @@ def build_gbm_preprocessor(use_engineered: bool = True) -> Pipeline:
         verbose_feature_names_out=False,
     )
     column_tf.set_output(transform="pandas")
-
-    return Pipeline(
-        steps=[
-            ("engineer", _engineering_transformer()),
-            ("select", column_tf),
-        ]
-    )
+    return column_tf
 
 
 def gbm_categorical_mask(use_engineered: bool = True) -> list[bool]:
@@ -123,13 +122,13 @@ def gbm_categorical_mask(use_engineered: bool = True) -> list[bool]:
 
 def build_logistic_preprocessor(
     use_engineered: bool = True, max_categories: int = 11
-) -> Pipeline:
+) -> ColumnTransformer:
     """Preprocessor for the LogisticRegression path.
 
-    Categoricals one-hot encoded with capping (top-(max_categories-1) + an
-    infrequent bucket); numerics standardised. handle_unknown="infrequent_if_exist"
-    routes unseen categories at inference to the infrequent bucket rather than
-    erroring.
+    Assumes engineered features are already present (added upstream). Categoricals
+    one-hot encoded with capping (top-(max_categories-1) + an infrequent bucket);
+    numerics standardised. handle_unknown="infrequent_if_exist" routes unseen
+    categories at inference to the infrequent bucket rather than erroring.
     """
     numeric_cols = numeric_feature_columns(use_engineered)
 
@@ -149,10 +148,4 @@ def build_logistic_preprocessor(
         verbose_feature_names_out=False,
     )
     column_tf.set_output(transform="pandas")
-
-    return Pipeline(
-        steps=[
-            ("engineer", _engineering_transformer()),
-            ("preprocess", column_tf),
-        ]
-    )
+    return column_tf

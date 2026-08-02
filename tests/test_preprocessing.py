@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from dropout_risk.core.features import add_engineered_features
 from dropout_risk.core.preprocessing import (
     CATEGORICAL_COLUMNS,
     build_gbm_preprocessor,
@@ -23,11 +24,17 @@ from dropout_risk.core.preprocessing import (
 )
 
 
+def _eng(df: pd.DataFrame) -> pd.DataFrame:
+    """Preprocessors now expect engineered features already present (added
+    upstream in the models), so tests must engineer before transforming."""
+    return add_engineered_features(df)
+
+
 def _frame(n: int = 300, seed: int = 0) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     return pd.DataFrame(
         {
-            "Marital status": rng.integers(1, 7, n),
+            "Marital Status": rng.integers(1, 7, n),
             "Application mode": rng.integers(1, 18, n),
             "Application order": rng.integers(0, 10, n),
             "Course": rng.integers(1, 18, n),
@@ -66,7 +73,7 @@ def _frame(n: int = 300, seed: int = 0) -> pd.DataFrame:
 def test_gbm_no_expansion_matches_mask():
     df = _frame()
     pre = build_gbm_preprocessor(use_engineered=True)
-    out = pre.fit_transform(df)
+    out = pre.fit_transform(_eng(df))
     mask = gbm_categorical_mask(use_engineered=True)
     assert out.shape[1] == len(mask)
 
@@ -79,8 +86,8 @@ def test_gbm_mask_marks_categoricals_first():
 
 def test_gbm_engineered_toggle_changes_width():
     df = _frame()
-    wide = build_gbm_preprocessor(True).fit_transform(df).shape[1]
-    narrow = build_gbm_preprocessor(False).fit_transform(df).shape[1]
+    wide = build_gbm_preprocessor(True).fit_transform(_eng(df)).shape[1]
+    narrow = build_gbm_preprocessor(False).fit_transform(_eng(df)).shape[1]
     assert wide == narrow + 6  # six engineered features
 
 
@@ -89,7 +96,7 @@ def test_gbm_engineered_toggle_changes_width():
 def test_logistic_caps_cardinality():
     df = _frame()
     pre = build_logistic_preprocessor(use_engineered=True, max_categories=11)
-    out = pre.fit_transform(df)
+    out = pre.fit_transform(_eng(df))
     # Father's occupation has ~46 levels; capped encoding must be far below
     # a naive one-hot. Total width should be well under 200.
     assert out.shape[1] < 200
@@ -98,13 +105,13 @@ def test_logistic_caps_cardinality():
 def test_logistic_tolerates_unseen_category_at_transform():
     train = _frame(seed=1)
     pre = build_logistic_preprocessor(use_engineered=True)
-    pre.fit(train)
+    pre.fit(_eng(train))
 
     test = _frame(seed=2)
     # inject a course code never seen in train
     test.loc[0, "Course"] = 999
     # must not raise
-    out = pre.transform(test)
+    out = pre.transform(_eng(test))
     assert out.shape[0] == len(test)
 
 
@@ -112,9 +119,9 @@ def test_logistic_train_test_columns_stable():
     train = _frame(seed=1)
     test = _frame(seed=2)
     pre = build_logistic_preprocessor(use_engineered=True)
-    pre.fit(train)
-    tr = pre.transform(train)
-    te = pre.transform(test)
+    pre.fit(_eng(train))
+    tr = pre.transform(_eng(train))
+    te = pre.transform(_eng(test))
     assert list(tr.columns) == list(te.columns)
 
 
@@ -129,5 +136,5 @@ def test_numeric_columns_include_engineered_when_requested():
 def test_no_nan_in_output():
     df = _frame()
     for builder in (build_gbm_preprocessor, build_logistic_preprocessor):
-        out = builder(use_engineered=True).fit_transform(df)
+        out = builder(use_engineered=True).fit_transform(_eng(df))
         assert not np.isnan(np.asarray(out, dtype=float)).any()
