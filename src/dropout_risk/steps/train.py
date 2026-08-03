@@ -133,6 +133,22 @@ def train_and_evaluate(
     slice_csv = "slice_table.csv"
     slice_table.to_csv(slice_csv, index=False)
     mlflow.log_artifact(slice_csv)
+
+    # --- SHAP interpretability (Phase 2E) ---
+    # Global importance: which features drive the candidate. Logged as CSV so it
+    # can be inspected and cited, and as a cross-check on the leakage
+    # investigation -- if an administrative flag dominates, revisit it.
+    try:
+        from dropout_risk.core.explain import global_importance
+        gi = global_importance(fitted[CANDIDATE].pipeline_, test_df)
+        gi_csv = "shap_global_importance.csv"
+        gi.to_csv(gi_csv, index=False)
+        mlflow.log_artifact(gi_csv)
+        logger.info("SHAP top-5 features: %s",
+                    ", ".join(gi.head(5)["feature"].tolist()))
+    except Exception as exc:  # SHAP is heavy; never let it break the run
+        logger.warning("SHAP global importance skipped: %s", exc)
+
     # Force cloudpickle serialization: MLflow 3.x defaults toward skops, which
     # rejects functools.partial and some sklearn validation helpers as
     # "untrusted". cloudpickle handles them without a trusted-types allowlist.
