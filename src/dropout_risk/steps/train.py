@@ -152,11 +152,25 @@ def train_and_evaluate(
     # Force cloudpickle serialization: MLflow 3.x defaults toward skops, which
     # rejects functools.partial and some sklearn validation helpers as
     # "untrusted". cloudpickle handles them without a trusted-types allowlist.
-    mlflow.sklearn.log_model(
+    model_info = mlflow.sklearn.log_model(
         fitted[CANDIDATE].pipeline_,
         name="candidate_model",
         serialization_format="cloudpickle",
     )
+
+    # Register + alias as champion ONLY if the gate passed. This is the
+    # promotion gate doing real work: a model that fails to beat the baseline
+    # convincingly never becomes the champion the inference pipeline loads.
+    if decision["promote"]:
+        model_name = config["registry"]["model_name"]
+        alias = config["registry"]["champion_alias"]
+        registered = mlflow.register_model(model_info.model_uri, model_name)
+        client = mlflow.tracking.MlflowClient()
+        client.set_registered_model_alias(model_name, alias, registered.version)
+        logger.info("Promoted: registered %s v%s as @%s",
+                    model_name, registered.version, alias)
+    else:
+        logger.info("Gate failed; candidate NOT registered as champion.")
 
     logger.info(
         "GATE: promote=%s  candidate=%.3f  baseline=%.3f  diff=%.3f [%.3f, %.3f]",
